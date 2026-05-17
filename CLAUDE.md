@@ -4,35 +4,93 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project intent
 
-UpliftBench is a portfolio project benchmarking causal inference / uplift modeling techniques on the **Criteo Uplift Prediction Dataset v2** (~13.9M rows, RCT-style randomized treatment assignment, from Criteo AI Lab). The repo currently contains only README.md and LICENSE — all code is yet to be written on branch `claude/causal-inference-uplift-x0DZw`.
+UpliftBench is a portfolio project benchmarking causal-inference and uplift-modeling techniques on the **Criteo Uplift Prediction Dataset v2** (~13.9M rows, RCT-style randomized treatment assignment, from Criteo AI Lab). All work happens on branch `claude/causal-inference-uplift-x0DZw`.
 
-The intended scope (from the original task brief) is:
+Scope:
 
-- **DoWhy four-step pipeline**: model → identify → estimate → refute.
-- **CausalML meta-learners**: S-learner, T-learner, X-learner.
-- **EconML Double Machine Learning** and a **DR-learner**.
-- Base learner is **CPU-bound LightGBM** with chunked dataset streaming (the dataset does not fit comfortably in memory on a laptop, and the project is explicitly designed to run on CPU in hours-per-estimator, not GPU).
-- Evaluation: **Qini curves**, **AUUC**, and segmentation of the population into **persuadables / sure-things / lost-causes / do-not-disturb**.
+- **DoWhy four-step pipeline**: model, identify, estimate, refute (all four refuters on a 1M-row stratified sample).
+- **CausalML meta-learners**: S-learner, T-learner, X-learner with LightGBM bases.
+- **EconML**: Double Machine Learning (LinearDML) and DR-learner.
+- Evaluation: Qini curves, AUUC, and four-way segmentation (persuadables, sure-things, lost-causes, do-not-disturb).
+- CPU-bound LightGBM with chunked dataset streaming. CPU only, not GPU.
 
-## Deliverables (drive architecture)
+## Hardware and stack
 
-Four artifacts are expected — keep the code organized so each one is straightforward to produce:
+| Item | Value |
+|---|---|
+| Target hardware | RTX 4080 laptop, 16 GB system RAM, Windows or WSL2 |
+| Python | 3.11+ |
+| Env manager | uv with `pyproject.toml`, src/ layout |
+| Lint | ruff |
+| Types | mypy (`uv run mypy src`) |
+| Tests | pytest, TDD for `eval/`, `data/loader`, `segmentation`, `persistence`, `refute/`. Smoke tests for estimators. |
+| Pre-commit | ruff format, ruff check, large-file guard, EOF/whitespace fixers |
+| CI | GitHub Actions, ubuntu-latest only |
+| Demo | Streamlit Community Cloud (slim deps via `[project.optional-dependencies] streamlit`) |
 
-1. **Streamlit Community Cloud demo** with a treatment-budget slider that updates the persuadable segment live. The Streamlit app should load a pre-trained model + a precomputed scored sample, not retrain on launch (Community Cloud has tight RAM/CPU limits).
-2. **Kaggle public notebook** (SEO visibility) — self-contained, runnable on Kaggle's environment.
-3. **GitHub repo** — this repo; reproducible training scripts + saved model artifacts.
-4. **Short technical blog post**.
+## Common commands
 
-Because the same logic feeds the notebook, the Streamlit app, and the training scripts, factor shared code (data loading, feature prep, scoring, Qini/AUUC, segmentation) into a small library module and have the three entry points (training script, notebook, Streamlit app) import from it rather than duplicating.
+```bash
+uv sync --extra dev                                       # install
+uv run pre-commit run --all-files                         # lint + hygiene
+uv run mypy src                                           # type-check
+uv run pytest -q                                          # tests
+uv run pytest --cov=upliftbench --cov-report=term-missing # tests + coverage
+make data                                                 # download Criteo CSV.gz
+make prepare                                              # CSV -> parquet
+make train-all                                            # train 5 estimators
+make dowhy                                                # refutation on 1M sample
+make score                                                # build LFS-tracked scored sample
+make eval                                                 # build leaderboard
+make app                                                  # streamlit local
+```
 
-## Data handling constraints
+## Architecture
 
-- The Criteo v2 CSV is large; **do not load it whole in memory**. Use chunked reading (`pandas.read_csv(chunksize=...)`) or `pyarrow`/parquet conversion as a one-time preprocessing step, then read parquet for training.
-- Treatment assignment is randomized — preserve that property when sampling; do not stratify by treatment in ways that destroy the RCT structure used for refutation.
-- Keep raw data out of git (add to `.gitignore` when adding it). The repo should be cloneable without the dataset; provide a download/preprocess script instead.
+The repo follows a single-source-of-truth library plus thin entry points. Everything lives under `src/upliftbench/`.
 
-## Working in this repo
+- `data/`: `download.py`, `prepare.py` (CSV.gz to parquet, dtype-optimized), `loader.py` (chunked iterator + `train_test_split_rct`).
+- `estimators/`: one module per estimator (`s_learner.py`, `t_learner.py`, `x_learner.py`, `dr_learner.py`, `dml.py`). All implement `BaseUpliftEstimator` (`fit`, `predict_cate`, `predict_baseline`). Registered in `ESTIMATOR_REGISTRY` in `estimators/__init__.py`.
+- `eval/`: `qini.py`, `auuc.py`, `topk.py`, `harness.py` (`evaluate_estimator(t, y, cate) -> dict`).
+- `segmentation.py`: **shared API** used by the training script, the Kaggle notebook, and the Streamlit app. Functions: `score_and_segment(...)`, `budget_allocation(...)`.
+- `refute/dowhy_pipeline.py`: `run_dowhy(df, best_estimator_name, sample_n)` does model, identify, estimate, then four refutations.
+- `persistence.py`: `save_model`, `load_model` with sibling metadata JSON.
+- `plotting.py`: Qini curves, AUUC bars, segment bars.
 
-- All work goes on branch `claude/causal-inference-uplift-x0DZw` (already checked out).
-- No build, lint, or test commands exist yet — add them to this file as soon as a `pyproject.toml` / `requirements.txt` / test suite is introduced.
-- When picking libraries, the brief explicitly calls for **DoWhy**, **CausalML**, **EconML**, and **LightGBM**. Prefer these over alternatives unless there's a concrete reason to deviate.
+Entry points:
+
+- `scripts/`: Typer CLIs for download, prepare, train, evaluate_all, run_dowhy, score_sample.
+- `streamlit_app/app.py`: imports ONLY `pandas`, `pyarrow`, `numpy`, `matplotlib`, `streamlit`, and `upliftbench.segmentation`. **No lightgbm/dowhy/causalml/econml imports**, so Streamlit Community Cloud stays under its 1 GB RAM cap.
+- `notebooks/`: EDA, per-phase notebooks, comparison, Kaggle end-to-end.
+
+## Data handling
+
+- The Criteo v2 CSV.gz is ~700 MB compressed, ~3 GB uncompressed. Convert to parquet once via `scripts/prepare_data.py`, then iterate parquet batches.
+- Treatment assignment is randomized. Do NOT stratify by treatment when splitting (it destroys the RCT structure DoWhy refutation depends on).
+- Raw and processed data are gitignored. The repo is cloneable without the dataset; `scripts/download_data.py` fetches it with a primary URL plus HF Datasets mirror fallback.
+
+## Memory budget on 16 GB laptop
+
+- Aggressive dtype downcast (float32 features, uint8 treatment/visit/conversion).
+- pyarrow batch iteration with `batch_size=500_000`.
+- LightGBM: `lgb.Dataset(..., free_raw_data=True, max_bin=63)`.
+- If peak RSS exceeds 12 GB on full data, fall back to a 5M-row stratified-by-treatment sample. Document the fallback in the blog.
+
+## Bundled skills
+
+`.claude/skills/` contains five skills any Claude Code session in this repo will auto-load:
+
+| Skill | Use when |
+|---|---|
+| `writing-plans` | Authoring or revising any plan in this repo |
+| `executing-plans` | Following an approved plan task-by-task |
+| `test-driven-development` | Any code touching `eval/`, `segmentation`, `data/loader`, `persistence`, or `refute/` |
+| `dispatching-parallel-agents` | Fanning out independent estimator builds or final deliverables (Streamlit + Kaggle + blog) |
+| `karpathy-guidelines` | Every coding task (think before coding, simplicity first, surgical changes, goal-driven verification) |
+
+## Repo conventions
+
+- **No em dashes** anywhere in code, docs, commits, or chat output. CI grep check enforces.
+- **No `git add -A`**: stage specific paths so secrets and large files cannot slip in.
+- **LFS scope**: only `artifacts/scored_sample.parquet`, `artifacts/leaderboard.parquet`, `artifacts/dowhy_refutation.json`. Trained models are gitignored; reproduce with `make train-all`.
+- **Branch policy**: develop on `claude/causal-inference-uplift-x0DZw`. Never push to main without explicit user request.
