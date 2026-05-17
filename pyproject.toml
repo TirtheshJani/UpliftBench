@@ -18,9 +18,11 @@ dependencies = [
     "tqdm>=4.66",
     "matplotlib>=3.8",
     "requests>=2.31",
-    "dowhy>=0.11",
+    "dowhy>=0.11,<0.13",
     "causalml>=0.15",
     "econml>=0.15",
+    # DoWhy 0.12 still uses nx.algorithms.d_separated which was removed in networkx 3.3.
+    "networkx>=2.8,<3.3",
 ]
 
 [project.optional-dependencies]
