@@ -58,11 +58,15 @@ class XLearner:
         self._mu1 = lgb.LGBMClassifier(**cls_params)
         self._mu1.fit(X[mask_t], Y[mask_t])
 
+        # Impute the missing-counterfactual treatment effect per row, using the
+        # OPPOSITE-arm response model. d1 / d0 are pseudo-outcomes for tau_*.
         mu0_proba = self._mu0.predict_proba(X[mask_t])[:, 1]
         mu1_proba = self._mu1.predict_proba(X[mask_c])[:, 1]
         d1 = Y[mask_t].astype(np.float64) - mu0_proba
         d0 = mu1_proba - Y[mask_c].astype(np.float64)
 
+        # Regress the pseudo-outcomes back on X within each arm to get tau_t / tau_c.
+        # These two estimates are then propensity-weighted at predict time.
         reg_params = _regressor_params()
         self._tau1 = lgb.LGBMRegressor(**reg_params)
         self._tau1.fit(X[mask_t], d1)
@@ -74,6 +78,10 @@ class XLearner:
             raise RuntimeError("XLearner is not fitted")
         t0 = np.asarray(self._tau0.predict(X), dtype=np.float64)
         t1 = np.asarray(self._tau1.predict(X), dtype=np.float64)
+        # Weighting by the OPPOSITE-arm propensity (g for tau_c, 1-g for tau_t)
+        # gives more weight to the side with fewer rows, which is exactly the
+        # side whose pseudo-outcomes are noisier; this is the X-learner trick.
+        # Under an RCT, g is approximately constant across X.
         g = self._propensity
         return g * t0 + (1.0 - g) * t1
 

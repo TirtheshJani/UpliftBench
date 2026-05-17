@@ -23,8 +23,13 @@ def csv_to_parquet(
     """
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # `block_size` is in bytes; ~256 bytes per row is a generous upper bound for
+    # Criteo's 16 numeric columns. Setting it as a function of `batch_rows` keeps
+    # peak memory roughly proportional to the caller's chunk-size choice.
     read_opts = pacsv.ReadOptions(block_size=batch_rows * 256)
     parse_opts = pacsv.ParseOptions(delimiter=",")
+    # Explicit column types here are what makes the parquet dtype-optimized.
+    # Without them, pyarrow infers int64 / double which would balloon RSS.
     convert_opts = pacsv.ConvertOptions(
         column_types={field.name: field.type for field in CRITEO_SCHEMA},
     )

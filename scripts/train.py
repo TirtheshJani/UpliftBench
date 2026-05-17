@@ -57,7 +57,12 @@ def _load_arrays(
 
 
 def _record_test_split(test_idx: np.ndarray, n_total: int, seed: int) -> str:
-    """Hash the held-out test row IDs so every estimator references the same split."""
+    """Hash the held-out test row IDs so every estimator references the same split.
+
+    The digest is also written to each model's sibling metadata JSON. `evaluate_all`
+    then refuses to mix estimators with different hashes onto the same leaderboard,
+    which catches the "trained S on 13.9M, trained T on a 5M sample" foot-gun.
+    """
     digest = hashlib.sha256(test_idx.tobytes()).hexdigest()[:16]
     if not TEST_SPLIT_JSON.exists():
         TEST_SPLIT_JSON.parent.mkdir(parents=True, exist_ok=True)

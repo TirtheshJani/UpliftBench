@@ -36,6 +36,9 @@ def _git_sha(default: str = "nogit") -> str:
 
 
 def _lib_versions() -> dict[str, str]:
+    # Pinning library versions into model metadata makes a stale leaderboard
+    # comparison detectable: if two models report different LightGBM versions,
+    # their numbers may not be directly comparable.
     libs = ("lightgbm", "causalml", "econml", "dowhy", "pyarrow", "scikit-learn", "numpy", "pandas")
     out: dict[str, str] = {}
     for name in libs:

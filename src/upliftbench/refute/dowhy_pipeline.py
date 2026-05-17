@@ -21,6 +21,9 @@ REFUTER_NAMES = (
     "unobserved_common_cause",
 )
 
+# Maps our short, JSON-friendly keys to the exact DoWhy method_name strings.
+# DoWhy's naming is inconsistent (some suffix with "_refuter", some don't); we hide
+# that quirk behind the short keys so the JSON output and the Streamlit table read clean.
 _REFUTER_TO_METHOD: dict[str, str] = {
     "placebo_treatment": "placebo_treatment_refuter",
     "random_common_cause": "random_common_cause",
@@ -48,6 +51,10 @@ def _stratified_sample(
 
 
 def _refuter_result(refute_result: Any) -> dict[str, float | str]:
+    # DoWhy refuters return heterogeneous result objects: some have a top-level
+    # `p_value` attribute, others wrap it in a `refutation_result` dict, and a few
+    # expose neither. Probe both shapes so the JSON output is uniform regardless of
+    # which refuter ran.
     out: dict[str, float | str] = {}
     out["new_estimate"] = float(getattr(refute_result, "new_effect", float("nan")))
     p = getattr(refute_result, "refutation_result", None)

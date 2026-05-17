@@ -38,6 +38,8 @@ def train_test_split_rct(
     rng = np.random.default_rng(seed)
     perm = rng.permutation(n)
     n_test = int(round(n * test_frac))
+    # Return sorted indices so downstream `df.iloc[idx]` stays cache-friendly and
+    # so the SHA-256 hash of test_idx in persistence metadata is order-invariant.
     test = np.sort(perm[:n_test])
     train = np.sort(perm[n_test:])
     return train, test

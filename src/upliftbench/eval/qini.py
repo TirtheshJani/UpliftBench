@@ -34,6 +34,7 @@ def qini_curve(
     """Return (population_fractions, qini_values) for the predicted ranking."""
     _validate(t, y, cate)
     n = len(t)
+    # Stable sort matters for reproducibility when many CATEs tie (e.g. at 0).
     order = np.argsort(-cate, kind="mergesort")
     t_sorted = t[order].astype(np.float64)
     y_sorted = y[order].astype(np.float64)
@@ -43,10 +44,15 @@ def qini_curve(
     cum_yt = np.cumsum(y_sorted * t_sorted)
     cum_yc = np.cumsum(y_sorted * (1.0 - t_sorted))
 
+    # The ratio cum_t / cum_c rescales the control-side response to the treated
+    # count, which is what makes the curve interpretable as "incremental positives".
+    # Early prefixes can have zero controls; the guard avoids 0/0 NaN.
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = np.where(cum_c > 0, cum_t / cum_c, 0.0)
     lift = cum_yt - cum_yc * ratio
 
+    # Prepend (0, 0) so the curve passes through the origin; downstream area
+    # integration treats this as the boundary point.
     xs = np.concatenate(([0.0], np.arange(1, n + 1) / n))
     ys = np.concatenate(([0.0], lift))
     return xs, ys
@@ -67,8 +73,12 @@ def qini_coefficient(t: np.ndarray, y: np.ndarray, cate: np.ndarray) -> float:
     _validate(t, y, cate)
     xs, ys = qini_curve(t, y, cate)
     q_total = ys[-1]
+    # No incremental lift anywhere in the population means the coefficient is
+    # mechanically undefined; return 0 rather than NaN so callers can sort/plot.
     if abs(q_total) < 1e-12:
         return 0.0
     area_model = _qini_area(xs, ys)
     area_random = q_total / 2.0
+    # Normalizing by |q_total| keeps the coefficient comparable across populations
+    # with different treatment rates and baseline outcome rates.
     return float(2.0 * (area_model - area_random) / abs(q_total))
