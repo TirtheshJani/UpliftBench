@@ -1,8 +1,20 @@
-"""Estimator registry for upliftbench.
+"""Estimator registry. Adds entries as estimator modules are imported."""
 
-Populated by Phase 2 (S, T) and Phase 3 (X, DR, DML).
-"""
+from __future__ import annotations
 
 from collections.abc import Callable
 
-ESTIMATOR_REGISTRY: dict[str, Callable[[], object]] = {}
+from upliftbench.estimators.base import BaseUpliftEstimator
+from upliftbench.estimators.s_learner import SLearner
+from upliftbench.estimators.t_learner import TLearner
+
+ESTIMATOR_REGISTRY: dict[str, Callable[[], BaseUpliftEstimator]] = {
+    SLearner.name: SLearner,
+    TLearner.name: TLearner,
+}
+
+
+def get_estimator(name: str) -> BaseUpliftEstimator:
+    if name not in ESTIMATOR_REGISTRY:
+        raise KeyError(f"Unknown estimator {name!r}. Available: {sorted(ESTIMATOR_REGISTRY)}")
+    return ESTIMATOR_REGISTRY[name]()
