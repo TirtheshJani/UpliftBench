@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# Data, never commit raw or processed Criteo files
+data/raw/
+data/processed/
+*.csv
+*.csv.gz
+
+# Models, too large for git; reproduce via `make train-all`
+artifacts/models/
+
+# Allow the LFS-tracked Streamlit artifact + leaderboard
+!artifacts/scored_sample.parquet
+!artifacts/leaderboard.parquet
+!artifacts/dowhy_refutation.json
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
