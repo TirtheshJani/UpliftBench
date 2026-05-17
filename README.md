@@ -1,7 +1,6 @@
 # UpliftBench
 
-> Causal-inference benchmark on the **Criteo Uplift Prediction Dataset v2**.
-> Five estimators, Qini + AUUC evaluation, four-way customer segmentation, DoWhy refutation, and a live Streamlit demo.
+> A causal-inference benchmark on the **Criteo Uplift Prediction Dataset v2**: five estimators, Qini and AUUC, four-way customer segmentation, DoWhy refutation, and a live Streamlit demo.
 
 [![CI](https://github.com/TirtheshJani/UpliftBench/actions/workflows/ci.yml/badge.svg)](https://github.com/TirtheshJani/UpliftBench/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -11,27 +10,26 @@
 
 ## Table of contents
 
-1. [What this is](#what-this-is)
-2. [Why](#why-causal-inference-now)
-3. [Deliverables](#deliverables)
-4. [Quickstart](#quickstart)
-5. [Repo layout](#repo-layout)
-6. [Architecture at a glance](#architecture-at-a-glance)
-7. [The five estimators](#the-five-estimators)
-8. [Evaluation](#evaluation)
-9. [The four-way segmentation](#the-four-way-segmentation)
-10. [DoWhy refutation](#dowhy-refutation)
-11. [Hardware and memory budget](#hardware-and-memory-budget)
-12. [Reproducibility](#reproducibility)
-13. [Documentation](#documentation)
-14. [Bundled skills](#bundled-skills)
-15. [Repo conventions](#repo-conventions)
-16. [Citation](#citation)
-17. [License](#license)
+1. [What this project is](#what-this-project-is)
+2. [What I learned](#what-i-learned)
+3. [Quickstart](#quickstart)
+4. [Repo layout](#repo-layout)
+5. [Architecture at a glance](#architecture-at-a-glance)
+6. [The five estimators](#the-five-estimators)
+7. [Evaluation](#evaluation)
+8. [The four-way segmentation](#the-four-way-segmentation)
+9. [DoWhy refutation](#dowhy-refutation)
+10. [Hardware and memory budget](#hardware-and-memory-budget)
+11. [Reproducibility](#reproducibility)
+12. [Documentation](#documentation)
+13. [Bundled skills](#bundled-skills)
+14. [Repo conventions](#repo-conventions)
+15. [Citation](#citation)
+16. [License](#license)
 
-## What this is
+## What this project is
 
-A portfolio-grade benchmark that takes the public **Criteo Uplift Prediction Dataset v2** (~13.9M rows, RCT-style randomized treatment, free from Criteo AI Lab) and runs five canonical uplift estimators end-to-end:
+UpliftBench takes the public **Criteo Uplift Prediction Dataset v2** (~13.9M rows from an RCT-style randomized ad-targeting experiment) and runs five canonical uplift estimators end-to-end on a single 16 GB laptop:
 
 - **S-learner** (one model, treatment as feature)
 - **T-learner** (two models, one per arm)
@@ -39,20 +37,57 @@ A portfolio-grade benchmark that takes the public **Criteo Uplift Prediction Dat
 - **DR-learner** (EconML, doubly robust, 3-fold cross-fit)
 - **Double Machine Learning** (EconML LinearDML)
 
-Each estimator implements the same `BaseUpliftEstimator` protocol so the eval harness, the Streamlit app, and the Kaggle notebook all consume them identically. The strongest estimator (by Qini) is wrapped in DoWhy's four-step pipeline and stress-tested with all four standard refuters.
+Each estimator implements the same `BaseUpliftEstimator` protocol so the evaluation harness, the Streamlit app, and the Kaggle notebook all consume them identically. The best estimator (by Qini) is then wrapped in DoWhy's four-step pipeline (model, identify, estimate, refute) and stress-tested with all four standard refuters on a stratified 1M-row sample.
 
-## Why causal inference, now
+Three artifacts come out: an interactive Streamlit demo where a treatment-budget slider re-allocates targeting across persuadable, sure-thing, lost-cause, and do-not-disturb segments live, a self-contained Kaggle notebook that fits the 9-hour CPU wall on a 2M-row subsample, and a short technical write-up.
 
-Causal inference / uplift modeling is the fastest-growing required skill in 2026 senior ML/DS job descriptions: Snap, Booking, Wayfair, Uber, DoorDash, and Spotify's Experimentation Platform team all hire for it. The Criteo Uplift v2 dataset is the canonical public benchmark in this space (real RCT-style randomized ad-targeting decisions). Doing the work on it, end-to-end and reproducibly, signals the right thing.
+## What I learned
 
-## Deliverables
+### Causal inference is structurally different from prediction
 
-| # | Artifact | Path |
-|---|---|---|
-| 1 | This GitHub repo | https://github.com/TirtheshJani/UpliftBench |
-| 2 | Streamlit Community Cloud demo (budget slider over pre-scored sample, no inference at runtime) | `streamlit_app/app.py` |
-| 3 | Kaggle public notebook (self-contained, 2M-row subsample, fits the 9-hour CPU wall) | `notebooks/kaggle_end_to_end.ipynb` |
-| 4 | Technical blog post | `blog/post.md` |
+A response model predicts `P(Y=1 | X)`. An uplift model predicts `P(Y=1 | X, T=1) - P(Y=1 | X, T=0)`. The catch: you never observe both for the same row. There is no ground-truth column to validate against per-row, only population-level metrics (Qini, AUUC) that integrate over a ranking. This reframes how you think about validation: instead of "did my predictions match the labels?", the question becomes "does my ranking produce a steeper-than-random cumulative-lift curve when we look at the held-out treated and control arms?".
+
+### Qini math is short but the normalization choice matters
+
+`Q(k) = Y_t(k) - Y_c(k) * (N_t(k) / N_c(k))` is two cumulative sums and a rescaling. The whole curve fits in about 15 lines of numpy. What is **not** short is picking the right denominator for the coefficient. My first implementation divided by `area_optimal - area_random`, where I approximated the optimal curve by sorting on `y*t - y*(1-t)`. That gave a Qini coefficient of -0.25 for a perfect ranker on synthetic data with known positive uplift. The "optimal" curve was actually a near-degenerate shape because of how the placeholder score behaved on early prefixes. Switching to the simpler `2 * (area_model - area_random) / |Q_total|` normalization (random near zero, perfect near one) made the math correct and the tests green. Lesson: TDD against synthetic data with known signal will save you from publishing a benchmark with a sign-flip bug.
+
+### The X-learner's propensity-weighting trick is the interesting part
+
+The X-learner is not "two models" or "four models". The structural insight is: build pseudo-outcomes `D_1 = Y - mu_0(X)` on treated rows and `D_0 = mu_1(X) - Y` on control rows (using the **opposite-arm** response model for each), regress them separately, and then combine the two CATE estimates with the propensity as the weight. The propensity weight is what makes it robust to imbalanced arms: when there are few treated rows, `D_1` is noisy, so `1-g` is small, so `tau_1` gets less weight in the final combination. Under an RCT, `g` is approximately constant; under observational data you would fit a propensity model. That single design choice is the difference between T-learner and X-learner.
+
+### Doubly robust is a strong promise
+
+The DR-learner is doubly robust: consistency of the CATE estimate requires only ONE of (propensity model, outcome regression) to be correctly specified, not both. EconML's implementation does this with 3-fold cross-fitting so the nuisance estimates are out-of-fold when they feed the final stage, avoiding the "training residuals are biased toward zero" trap. Cross-fitting is a small implementation cost (you fit nuisances K times) but the bias guarantee is large. This is also why Double Machine Learning works: residualize both sides, then regress residual on residual.
+
+### DoWhy refutation is the part that separates a benchmark from a press release
+
+The four refuters answer different questions:
+- `placebo_treatment`: if you scramble the treatment column, does the estimate go to zero? (sanity)
+- `random_common_cause`: if you add a meaningless covariate, does the estimate stay put? (robustness to spurious adjustment)
+- `data_subset`: is the estimate stable to row subsampling? (no concentration in a few rows)
+- `add_unobserved_common_cause`: how strong would a hidden confounder need to be to drive the estimate to zero? (sensitivity)
+
+An ATE point estimate without these refutations is a number, not a finding. The 1M-row sample size for refutation is a pragmatic compromise; the math would be more precise on the full data, but the laptop wall-time is the binding constraint, not the statistical precision.
+
+### Memory engineering is half the work on a single laptop
+
+13.9M rows fits in 16 GB only if you treat dtype as a first-class design decision. Float32 features, uint8 treatment / visit / conversion, parquet with zstd, pyarrow batch iteration at 500k rows, and `lgb.Dataset(free_raw_data=True, max_bin=63)` keep peak RSS under 6 GB during training. Skip any one of those and you can blow past 12 GB and start swapping. The first time I tried with default pandas dtypes, the to_pandas() call alone took 4 GB just for the feature matrix.
+
+### The segmentation step is where the model meets the budget decision
+
+A CATE estimate alone is not actionable. To decide who to treat, you need both the predicted uplift AND the predicted baseline outcome: someone with high baseline propensity is going to convert anyway, so spending budget on them is waste even if their CATE looks high. The four-way segmentation (persuadables, sure-things, lost-causes, do-not-disturb) is the canonical way to translate `(pred_cate, pred_baseline)` into a targeting policy. The Streamlit slider makes this tangible: at small budgets you're targeting almost pure persuadables, but as the budget grows the marginal added user is increasingly a sure-thing or a do-not-disturb. That diminishing-returns curve is the story.
+
+### The "no inference at runtime" Streamlit pattern
+
+Streamlit Community Cloud caps each app at ~1 GB RAM. LightGBM + DoWhy + CausalML + EconML alone come to several hundred MB of installed code, and loading even one trained model adds more. The right pattern is to precompute a 200k-row scored sample at training time, persist it as a parquet via Git LFS, and have the Streamlit app do only filtering and segmentation math at runtime. The app's import list is intentionally `pandas, pyarrow, numpy, matplotlib, streamlit` plus the shared `segmentation` module. No heavy ML imports anywhere. Cold start drops from "model loading times out" to under three seconds.
+
+### Library version pinning is not optional in causal inference
+
+DoWhy 0.12 still uses `networkx.algorithms.d_separated`, which networkx removed in 3.3. CausalML's X-learner internally uses pygam, which calls `.A` on a scipy sparse matrix, which scipy removed in a recent release. Both broke before I had any code on the page. The fix is networkx pinned `<3.3` in pyproject and a from-scratch X-learner implementation that skips the pygam path. Both decisions are documented in the code so a future reader knows which pins are accidental and which are load-bearing.
+
+### TDD is unreasonably effective on math-bearing code
+
+Five of the seven test files are TDD against synthetic data with a known signal: per-row uplift `u_i = sigmoid(x_i)`, then verify a perfect ranker beats random by a measurable margin and a random ranker stays within ±0.03 of zero. Those tests caught the Qini sign-flip described above, caught a propensity-weighting direction bug in the X-learner, and caught a dtype regression in the parquet writer. Each test ran red first, then green after the minimal implementation. The cycle felt slow on the first task; by the fifth it was the fastest way to ship the math.
 
 ## Quickstart
 
@@ -256,7 +291,7 @@ uv run pytest --cov=upliftbench --cov-report=term-missing
 | [`docs/EVALUATION.md`](docs/EVALUATION.md) | Qini and AUUC math, normalization, anti-patterns |
 | [`docs/REFUTATION.md`](docs/REFUTATION.md) | DoWhy 4-step pipeline, each refuter's intent |
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Dev setup, TDD policy, pre-commit, CI |
-| [`blog/post.md`](blog/post.md) | ~900-word technical writeup (the deliverable) |
+| [`blog/post.md`](blog/post.md) | Short technical write-up |
 
 ## Bundled skills
 
