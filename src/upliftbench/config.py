@@ -1,6 +1,7 @@
 """Project-wide constants: paths, feature names, seed, segmentation thresholds."""
 
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -34,7 +35,7 @@ SEED = 42
 TEST_FRAC = 0.2
 DEFAULT_BATCH_ROWS = 500_000
 
-LIGHTGBM_PARAMS: dict[str, object] = {
+LIGHTGBM_PARAMS: dict[str, Any] = {
     "objective": "binary",
     "metric": "binary_logloss",
     "learning_rate": 0.05,

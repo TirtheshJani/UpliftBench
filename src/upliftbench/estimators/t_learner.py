@@ -5,6 +5,8 @@ CATE = mu_1(x) - mu_0(x). baseline = mu_0(x).
 
 from __future__ import annotations
 
+from typing import Any
+
 import lightgbm as lgb
 import numpy as np
 
@@ -14,7 +16,7 @@ from upliftbench.config import LIGHTGBM_PARAMS
 class TLearner:
     name = "t-learner"
 
-    def __init__(self, params: dict[str, object] | None = None) -> None:
+    def __init__(self, params: dict[str, Any] | None = None) -> None:
         self.params = dict(LIGHTGBM_PARAMS if params is None else params)
         self._n_estimators = int(self.params.pop("n_estimators", 200))  # type: ignore[call-overload]
         self.model_treated_: lgb.Booster | None = None
