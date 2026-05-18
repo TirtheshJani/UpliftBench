@@ -87,7 +87,7 @@ DoWhy 0.12 still uses `networkx.algorithms.d_separated`, which networkx removed 
 
 ### TDD is unreasonably effective on math-bearing code
 
-Five of the seven test files are TDD against synthetic data with a known signal: per-row uplift `u_i = sigmoid(x_i)`, then verify a perfect ranker beats random by a measurable margin and a random ranker stays within ±0.03 of zero. Those tests caught the Qini sign-flip described above, caught a propensity-weighting direction bug in the X-learner, and caught a dtype regression in the parquet writer. Each test ran red first, then green after the minimal implementation. The cycle felt slow on the first task; by the fifth it was the fastest way to ship the math.
+Seven of the ten test files are TDD against synthetic data with a known signal: per-row uplift `u_i = sigmoid(x_i)`, then verify a perfect ranker beats random by a measurable margin and a random ranker stays within ±0.03 of zero. Those tests caught the Qini sign-flip described above, caught a propensity-weighting direction bug in the X-learner, and caught a dtype regression in the parquet writer. Each test ran red first, then green after the minimal implementation. The cycle felt slow on the first task; by the fifth it was the fastest way to ship the math.
 
 ## Quickstart
 
@@ -109,7 +109,7 @@ make score      # build artifacts/scored_sample.parquet (Git LFS)
 # 4. Demo and tests
 make app        # Streamlit local
 make test       # pytest -q
-make ci         # lint + type + test
+make ci         # lint + fmt-check + type + test-cov + em-dash-check (mirrors GHA)
 ```
 
 If you only have 60 seconds and just want to read the math, open
@@ -138,7 +138,6 @@ UpliftBench/
 │   ├── config.py                          # paths, FEATURES, LIGHTGBM_PARAMS, thresholds
 │   ├── features.py                        # Criteo schema (pyarrow), dtype map
 │   ├── data/
-│   │   ├── download.py                    # primary URL + HF mirror fallback
 │   │   ├── prepare.py                     # streaming CSV.gz to parquet (pyarrow)
 │   │   └── loader.py                      # chunked iterator + train_test_split_rct
 │   ├── estimators/
@@ -155,7 +154,8 @@ UpliftBench/
 │   ├── persistence.py                     # save/load + sibling JSON metadata
 │   └── plotting.py
 ├── scripts/                               # Typer CLIs
-│   ├── download_data.py, prepare_data.py
+│   ├── download_data.py                   # primary URL + HF mirror fallback
+│   ├── prepare_data.py
 │   ├── train.py, evaluate_all.py
 │   ├── run_dowhy.py, score_sample.py
 ├── notebooks/
@@ -167,7 +167,7 @@ UpliftBench/
 │   └── kaggle_end_to_end.ipynb            # self-contained, fits 9h Kaggle CPU
 ├── streamlit_app/app.py                   # NO heavy ML imports (slim Streamlit Cloud)
 ├── tests/                                 # pytest tree mirrors src/
-├── artifacts/                             # LFS only: scored_sample, leaderboard, refutation
+├── artifacts/                             # produced locally by make score/eval/dowhy; gitignored unless committed via LFS
 └── blog/post.md
 ```
 
@@ -307,8 +307,8 @@ uv run pytest --cov=upliftbench --cov-report=term-missing
 
 - **No em dashes** anywhere in committed text. A pre-commit hook enforces this. Use commas, parentheses, or semicolons.
 - **No `git add -A`**. Stage specific paths so secrets and large files cannot slip in.
-- **Git LFS** only for `artifacts/{scored_sample.parquet, leaderboard.parquet, dowhy_refutation.json}`. Trained models are gitignored; reproduce with `make train-all`.
-- **Branch policy**: develop on `claude/causal-inference-uplift-x0DZw`. Do not push to `main` without explicit user request.
+- **Git LFS** rules in `.gitattributes` are scoped to `artifacts/{scored_sample.parquet, leaderboard.parquet, dowhy_refutation.json}`. These files do NOT ship with the repo; they are produced locally by `make score` / `make eval` / `make dowhy` and only committed via LFS if you choose to publish them. Trained models are gitignored; reproduce with `make train-all`.
+- **Branch policy**: develop on a feature branch (e.g. `claude/<topic>`) and open a PR to `main`. Do not push to `main` without explicit user request.
 
 ## Citation
 

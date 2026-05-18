@@ -83,7 +83,7 @@ Don't sneak in unrelated changes; one commit, one logical purpose.
 
 ## Branch policy
 
-Develop on `claude/causal-inference-uplift-x0DZw`. Do not push to `main` without explicit user request. Open one PR per logical unit; pushing to the branch updates the existing PR automatically.
+Develop on a feature branch (e.g. `claude/<topic>`) and open a PR to `main`. Do not push to `main` without explicit user request. Open one PR per logical unit; pushing to the branch updates the existing PR automatically.
 
 ## When in doubt
 
