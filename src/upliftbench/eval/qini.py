@@ -59,7 +59,7 @@ def qini_curve(
 
 
 def _qini_area(xs: np.ndarray, ys: np.ndarray) -> float:
-    return float(np.trapz(ys, xs))
+    return float(np.trapezoid(ys, xs))
 
 
 def qini_coefficient(t: np.ndarray, y: np.ndarray, cate: np.ndarray) -> float:

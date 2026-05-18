@@ -2,7 +2,7 @@
 
 Causal inference is the fastest-growing required skill in 2026 senior ML/DS job descriptions. Snap, Booking, Wayfair, Uber, DoorDash, and Spotify's Experimentation Platform team all want the same thing: someone who can model a treatment effect, defend it under refutation, and turn a heterogeneous treatment effect estimate into a budget decision. This post benchmarks five canonical uplift estimators on the **Criteo Uplift Prediction Dataset v2** (13.9M RCT-style randomized ad-targeting decisions, free from Criteo AI Lab) using DoWhy, EconML, and CausalML, evaluates with Qini and AUUC, segments the population into the four canonical customer types, and ships a live Streamlit demo where you can move a treatment-budget slider and watch the persuadable segment update.
 
-Repo: https://github.com/TirtheshJani/UpliftBench. Branch: `claude/causal-inference-uplift-x0DZw`.
+Repo: https://github.com/TirtheshJani/UpliftBench (development on feature branches, merged to `main` via PR).
 
 ## The five estimators
 

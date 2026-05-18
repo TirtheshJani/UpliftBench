@@ -1,4 +1,4 @@
-.PHONY: install data prepare train-all dowhy score eval test lint type fmt precommit ci clean app
+.PHONY: install data prepare train-all dowhy score eval test test-cov lint type fmt fmt-check em-dash-check precommit ci clean app
 
 PY := uv run
 
@@ -31,19 +31,32 @@ eval:
 test:
 	$(PY) pytest -q
 
+test-cov:
+	$(PY) pytest -q --cov=upliftbench --cov-report=term
+
 lint:
 	$(PY) ruff check src tests scripts streamlit_app
 
 fmt:
 	$(PY) ruff format src tests scripts streamlit_app
 
+fmt-check:
+	$(PY) ruff format --check src tests scripts streamlit_app
+
 type:
 	$(PY) mypy src
+
+em-dash-check:
+	@if grep -rn $$'\xe2\x80\x94' src tests scripts streamlit_app blog README.md CLAUDE.md 2>/dev/null; then \
+		echo "Em dashes found. Use commas, parens, or semicolons instead."; \
+		exit 1; \
+	fi
 
 precommit:
 	$(PY) pre-commit run --all-files
 
-ci: lint type test
+# Mirrors .github/workflows/ci.yml so a green `make ci` predicts a green GHA run.
+ci: lint fmt-check type test-cov em-dash-check
 
 app:
 	$(PY) streamlit run streamlit_app/app.py

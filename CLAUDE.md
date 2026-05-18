@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project intent
 
-UpliftBench is a portfolio project benchmarking causal-inference and uplift-modeling techniques on the **Criteo Uplift Prediction Dataset v2** (~13.9M rows, RCT-style randomized treatment assignment, from Criteo AI Lab). All work happens on branch `claude/causal-inference-uplift-x0DZw`.
+UpliftBench is a portfolio project benchmarking causal-inference and uplift-modeling techniques on the **Criteo Uplift Prediction Dataset v2** (~13.9M rows, RCT-style randomized treatment assignment, from Criteo AI Lab). Development happens on feature branches (e.g. `claude/<topic>`) merged to `main` via PR.
 
 Scope:
 
@@ -49,18 +49,18 @@ make app                                                  # streamlit local
 
 The repo follows a single-source-of-truth library plus thin entry points. Everything lives under `src/upliftbench/`.
 
-- `data/`: `download.py`, `prepare.py` (CSV.gz to parquet, dtype-optimized), `loader.py` (chunked iterator + `train_test_split_rct`).
+- `data/`: `prepare.py` (CSV.gz to parquet, dtype-optimized), `loader.py` (chunked iterator + `train_test_split_rct`). Download lives in `scripts/download_data.py` (primary URL + HF mirror fallback), not in the library.
 - `estimators/`: one module per estimator (`s_learner.py`, `t_learner.py`, `x_learner.py`, `dr_learner.py`, `dml.py`). All implement `BaseUpliftEstimator` (`fit`, `predict_cate`, `predict_baseline`). Registered in `ESTIMATOR_REGISTRY` in `estimators/__init__.py`.
 - `eval/`: `qini.py`, `auuc.py`, `topk.py`, `harness.py` (`evaluate_estimator(t, y, cate) -> dict`).
 - `segmentation.py`: **shared API** used by the training script, the Kaggle notebook, and the Streamlit app. Functions: `score_and_segment(...)`, `budget_allocation(...)`.
-- `refute/dowhy_pipeline.py`: `run_dowhy(df, best_estimator_name, sample_n)` does model, identify, estimate, then four refutations.
+- `refute/dowhy_pipeline.py`: `run_dowhy(df, feature_cols, treatment_col="treatment", outcome_col="visit", sample_n=1_000_000, seed=42, estimator_method="backdoor.linear_regression")` does model, identify, estimate, then four refutations. The trained learners from Phase 2 are evaluated separately; DoWhy uses its own backdoor estimator (`estimator_method`) for the refutation pipeline, not the winning meta-learner.
 - `persistence.py`: `save_model`, `load_model` with sibling metadata JSON.
 - `plotting.py`: Qini curves, AUUC bars, segment bars.
 
 Entry points:
 
 - `scripts/`: Typer CLIs for download, prepare, train, evaluate_all, run_dowhy, score_sample.
-- `streamlit_app/app.py`: imports ONLY `pandas`, `pyarrow`, `numpy`, `matplotlib`, `streamlit`, and `upliftbench.segmentation`. **No lightgbm/dowhy/causalml/econml imports**, so Streamlit Community Cloud stays under its 1 GB RAM cap.
+- `streamlit_app/app.py`: import allow-list is `pandas`, `matplotlib`, `streamlit`, `upliftbench.config` (pure constants), and `upliftbench.segmentation`. **No lightgbm/dowhy/causalml/econml imports**, so Streamlit Community Cloud stays under its 1 GB RAM cap.
 - `notebooks/`: EDA, per-phase notebooks, comparison, Kaggle end-to-end.
 
 ## Data handling
@@ -92,5 +92,5 @@ Entry points:
 
 - **No em dashes** anywhere in code, docs, commits, or chat output. CI grep check enforces.
 - **No `git add -A`**: stage specific paths so secrets and large files cannot slip in.
-- **LFS scope**: only `artifacts/scored_sample.parquet`, `artifacts/leaderboard.parquet`, `artifacts/dowhy_refutation.json`. Trained models are gitignored; reproduce with `make train-all`.
-- **Branch policy**: develop on `claude/causal-inference-uplift-x0DZw`. Never push to main without explicit user request.
+- **LFS scope**: `.gitattributes` declares LFS rules for `artifacts/scored_sample.parquet`, `artifacts/leaderboard.parquet`, `artifacts/dowhy_refutation.json`, but these files are NOT committed to the repo. Produce them locally with `make score` / `make eval` / `make dowhy`; commit via LFS only if you choose to publish. Trained models are gitignored; reproduce with `make train-all`.
+- **Branch policy**: develop on a feature branch (e.g. `claude/<topic>`) and open a PR to `main`. Never push to `main` without explicit user request.
