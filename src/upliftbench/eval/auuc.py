@@ -58,6 +58,6 @@ def auuc(t: np.ndarray, y: np.ndarray, cate: np.ndarray) -> float:
     u_total = ys[-1]
     if abs(u_total) < 1e-12:
         return 0.0
-    area_model = float(np.trapz(ys, xs))
+    area_model = float(np.trapezoid(ys, xs))
     area_random = u_total / 2.0
     return float(2.0 * (area_model - area_random) / abs(u_total))
