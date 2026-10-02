@@ -1,10 +1,13 @@
-.PHONY: install data prepare train-all dowhy score eval test test-cov lint type fmt fmt-check em-dash-check precommit ci clean app
+.PHONY: install demo data prepare train-all dowhy score eval test test-cov lint type fmt fmt-check em-dash-check precommit ci clean app
 
 PY := uv run
 
 install:
 	uv sync --extra dev
 	$(PY) pre-commit install
+
+demo:
+	$(PY) python -m upliftbench.demo
 
 data:
 	$(PY) python scripts/download_data.py
