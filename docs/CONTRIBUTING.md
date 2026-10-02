@@ -19,7 +19,8 @@ make fmt         # ruff format (writes)
 make type        # mypy src
 make test        # pytest -q
 make precommit   # pre-commit run --all-files
-make ci          # lint + type + test (what CI runs)
+make ci          # lint + fmt-check + type + test-cov + em-dash-check (mirrors CI)
+make demo        # no-download synthetic RCT demo (all five estimators, < 1 min)
 ```
 
 ## TDD policy

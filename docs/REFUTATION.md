@@ -1,6 +1,6 @@
 # DoWhy refutation
 
-`src/upliftbench/refute/dowhy_pipeline.py::run_dowhy` runs the four standard refuters against the strongest estimator (best by Qini, recorded in `artifacts/best_estimator.txt`). Refutation is the "step 4" of DoWhy's four-step pipeline:
+`src/upliftbench/refute/dowhy_pipeline.py::run_dowhy` runs the four standard refuters against an average-effect estimate from DoWhy's own estimator (`estimator_method`, default `backdoor.linear_regression`). It does not consume the trained meta-learners or `artifacts/best_estimator.txt`; those are evaluated separately with Qini/AUUC. Refutation is the "step 4" of DoWhy's four-step pipeline:
 
 1. **Model** the causal graph: treatment, outcome, common causes.
 2. **Identify** an estimand via backdoor adjustment.

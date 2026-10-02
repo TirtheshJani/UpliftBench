@@ -26,12 +26,13 @@ Scope:
 | Tests | pytest, TDD for `eval/`, `data/loader`, `segmentation`, `persistence`, `refute/`. Smoke tests for estimators. |
 | Pre-commit | ruff format, ruff check, large-file guard, EOF/whitespace fixers |
 | CI | GitHub Actions, ubuntu-latest only |
-| Demo | Streamlit Community Cloud (slim deps via `[project.optional-dependencies] streamlit`) |
+| Demo | `make demo` (synthetic RCT, no download); Streamlit app for the scored Criteo sample. The `streamlit` extra is additive (heavy libs are core deps), so a Cloud deploy needs its own slim requirements file |
 
 ## Common commands
 
 ```bash
 uv sync --extra dev                                       # install
+make demo                                                 # synthetic RCT demo, no download, < 1 min
 uv run pre-commit run --all-files                         # lint + hygiene
 uv run mypy src                                           # type-check
 uv run pytest -q                                          # tests
@@ -60,7 +61,7 @@ The repo follows a single-source-of-truth library plus thin entry points. Everyt
 Entry points:
 
 - `scripts/`: Typer CLIs for download, prepare, train, evaluate_all, run_dowhy, score_sample.
-- `streamlit_app/app.py`: import allow-list is `pandas`, `matplotlib`, `streamlit`, `upliftbench.config` (pure constants), and `upliftbench.segmentation`. **No lightgbm/dowhy/causalml/econml imports**, so Streamlit Community Cloud stays under its 1 GB RAM cap.
+- `streamlit_app/app.py`: import allow-list is `pandas`, `matplotlib`, `streamlit`, `upliftbench.config` (pure constants), and `upliftbench.segmentation`. **No lightgbm/dowhy/causalml/econml imports**, so the running app stays small (see the Demo row above for the install caveat).
 - `notebooks/`: EDA, per-phase notebooks, comparison, Kaggle end-to-end.
 
 ## Data handling

@@ -1,6 +1,6 @@
 # Architecture
 
-UpliftBench is a single library (`src/upliftbench/`) plus three thin entry points (training scripts, Streamlit app, Kaggle notebook). The library is the single source of truth; every entry point imports from it.
+UpliftBench is a single library (`src/upliftbench/`) plus thin entry points (training scripts, the no-download demo, Streamlit app, Kaggle notebook). The library is the single source of truth; every entry point imports from it.
 
 ## Module map
 
@@ -21,6 +21,7 @@ UpliftBench is a single library (`src/upliftbench/`) plus three thin entry point
 | `refute/dowhy_pipeline.py` | `run_dowhy`, `REFUTER_NAMES` | All four standard refuters on a stratified sample |
 | `persistence.py` | `save_model`, `load_model`, `ModelPaths` | Joblib + sibling JSON metadata |
 | `plotting.py` | `qini_plot`, `auuc_bar`, `segment_bar` | matplotlib helpers |
+| `demo.py` | `make_synthetic_rct`, `run_demo`, `python -m upliftbench.demo` | Synthetic RCT with known effect; fits estimators via the registry and scores with `evaluate_estimator` (no download) |
 
 ## Entry points
 
@@ -37,12 +38,12 @@ streamlit_app/app.py       ─►  reads scored_sample + leaderboard + refutatio
 The Streamlit app's import list is intentionally minimal:
 
 ```python
-import pandas, pyarrow, numpy, matplotlib, streamlit
-from upliftbench.config import ...
+import json, pathlib, matplotlib.pyplot, pandas, streamlit
+from upliftbench.config import DOWHY_REFUTATION_JSON, LEADERBOARD_PARQUET, SCORED_SAMPLE_PARQUET
 from upliftbench.segmentation import budget_allocation, ALL_SEGMENTS, SEGMENT_PERSUADABLE
 ```
 
-No `lightgbm`, no `dowhy`, no `causalml`, no `econml`. The slim `streamlit` extra in `pyproject.toml` excludes those so the Streamlit Community Cloud install stays under its 1 GB RAM cap.
+No `lightgbm`, no `dowhy`, no `causalml`, no `econml` are imported, so the running app stays small. Note that the `streamlit` extra in `pyproject.toml` is additive: the heavy libraries are core dependencies, so `pip install .[streamlit]` still installs them. A Streamlit Community Cloud deployment under its 1 GB cap would need a separate slim requirements file.
 
 ## Shared contracts
 
@@ -56,8 +57,9 @@ Two contracts let independent pieces compose:
 A single seed (`config.SEED = 42`) drives:
 
 - the random train/test split in `train_test_split_rct`,
-- LightGBM's `bagging` and `feature_fraction` sampling,
 - DoWhy's stratified subsample for refutation,
 - the 200k-row sample drawn by `score_sample`.
+
+Not wired to `SEED`: LightGBM's `bagging` / `feature_fraction` sampling uses LightGBM's own default seeds (repeatable on the same machine and thread count), and EconML's cross-fitting folds in the DR-learner and LinearDML are unseeded, so those two estimators vary slightly between runs.
 
 Every training run hashes the held-out test row indices and writes the digest into the model's sibling `.json` so `evaluate_all` can confirm every estimator was scored on the same rows.

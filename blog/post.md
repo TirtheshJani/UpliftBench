@@ -37,7 +37,7 @@ The Streamlit demo shows you how the four-way mix shifts as you change the treat
 
 ## DoWhy four-step pipeline
 
-For the strongest estimator (DR-learner in my run on the full dataset) we wrap the whole pipeline in DoWhy:
+The strongest estimator by Qini was the DR-learner in my run on the full dataset. Separately, DoWhy estimates and refutes the average treatment effect with its own backdoor estimator (the meta-learners are not passed into DoWhy):
 
 1. **Model**: a `CausalModel` with `treatment`, `visit` (outcome), and the 12 features as common causes.
 2. **Identify**: `identify_effect(proceed_when_unidentifiable=True)`, backdoor adjustment.
