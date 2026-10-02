@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "UpliftBench: causal uplift-modeling benchmark on Criteo Uplift v2"
+abstract: >-
+  A reproducible benchmark of five uplift estimators (S-learner, T-learner,
+  X-learner, DR-learner, LinearDML) on the Criteo Uplift Prediction Dataset v2,
+  with Qini and AUUC evaluation, four-way customer segmentation, DoWhy
+  refutation, and a Streamlit budget explorer.
+type: software
+authors:
+  - family-names: Jani
+    given-names: Tirthesh
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/TirtheshJani/UpliftBench"
+keywords:
+  - causal inference
+  - uplift modeling
+  - heterogeneous treatment effects
+  - Qini
+  - DoWhy
+  - EconML
+references:
+  - type: conference-paper
+    title: "A Large Scale Benchmark for Uplift Modeling"
+    authors:
+      - family-names: Diemert
+        given-names: Eustache
+      - family-names: Betlei
+        given-names: Artem
+      - family-names: Renaudin
+        given-names: Christophe
+      - family-names: Amini
+        given-names: Massih-Reza
+    collection-title: "Proceedings of the AdKDD and TargetAd Workshop, KDD"
+    year: 2018
