@@ -58,8 +58,20 @@ def qini_curve(
     return xs, ys
 
 
+def trapezoid(ys: np.ndarray, xs: np.ndarray) -> float:
+    """Trapezoidal-rule area under `ys` over `xs`, independent of the numpy version.
+
+    `np.trapz` was deprecated in numpy 2.0 and removed in 2.4, and `np.trapezoid` only
+    exists from 2.0 on, so neither works across the supported `numpy>=1.26` range.
+    This is the same formula.
+    """
+    xs = np.asarray(xs, dtype=np.float64)
+    ys = np.asarray(ys, dtype=np.float64)
+    return float(np.sum(np.diff(xs) * (ys[1:] + ys[:-1])) / 2.0)
+
+
 def _qini_area(xs: np.ndarray, ys: np.ndarray) -> float:
-    return float(np.trapezoid(ys, xs))
+    return trapezoid(ys, xs)
 
 
 def qini_coefficient(t: np.ndarray, y: np.ndarray, cate: np.ndarray) -> float:

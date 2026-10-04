@@ -70,3 +70,13 @@ def test_qini_input_validation() -> None:
         qini_coefficient(np.array([0, 1]), np.array([0, 1, 0]), np.array([0.1, 0.2, 0.3]))
     with pytest.raises(ValueError):
         qini_coefficient(np.array([0, 1, 2]), np.array([0, 1, 0]), np.array([0.1, 0.2, 0.3]))
+
+
+def test_trapezoid_matches_analytic_area_on_any_numpy() -> None:
+    # Regression: np.trapezoid only exists on numpy>=2 and np.trapz is gone from 2.4.
+    # The helper must work on both so the Qini/AUUC math does not depend on the pin.
+    from upliftbench.eval.qini import trapezoid
+
+    xs = np.linspace(0.0, 1.0, 101)
+    assert trapezoid(xs, xs) == pytest.approx(0.5, abs=1e-12)
+    assert trapezoid(np.array([0.0, 2.0]), np.array([0.0, 1.0])) == pytest.approx(1.0)
