@@ -73,7 +73,7 @@ def test_qini_input_validation() -> None:
 
 
 def test_trapezoid_matches_analytic_area_on_any_numpy() -> None:
-    # Regression: np.trapezoid only exists on numpy>=2 and np.trapz only on numpy<2.
+    # Regression: np.trapezoid only exists on numpy>=2 and np.trapz is gone from 2.4.
     # The helper must work on both so the Qini/AUUC math does not depend on the pin.
     from upliftbench.eval.qini import trapezoid
 
