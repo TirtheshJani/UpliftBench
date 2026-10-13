@@ -1,330 +1,202 @@
 # UpliftBench
 
-> A causal-inference benchmark on the **Criteo Uplift Prediction Dataset v2**: five estimators, Qini and AUUC, four-way customer segmentation, DoWhy refutation, and a live Streamlit demo.
+Five uplift estimators (S-, T-, and X-learner, DR-learner, LinearDML) benchmarked on the 13.98M-row Criteo Uplift v2 randomized experiment. Qini and AUUC are written from scratch, DoWhy refuters stress-test the average effect, and a Streamlit budget explorer reads precomputed scores instead of loading a model.
 
 [![CI](https://github.com/TirtheshJani/UpliftBench/actions/workflows/ci.yml/badge.svg)](https://github.com/TirtheshJani/UpliftBench/actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![uv](https://img.shields.io/badge/built%20with-uv-261230.svg)](https://github.com/astral-sh/uv)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## Table of contents
+A response model predicts who will convert. An uplift model predicts who will convert because they were treated. No row is ever observed both treated and untreated, so there is no per-row label to check it against.
 
-1. [What this project is](#what-this-project-is)
-2. [What I learned](#what-i-learned)
-3. [Quickstart](#quickstart)
-4. [Repo layout](#repo-layout)
-5. [Architecture at a glance](#architecture-at-a-glance)
-6. [The five estimators](#the-five-estimators)
-7. [Evaluation](#evaluation)
-8. [The four-way segmentation](#the-four-way-segmentation)
-9. [DoWhy refutation](#dowhy-refutation)
-10. [Hardware and memory budget](#hardware-and-memory-budget)
-11. [Reproducibility](#reproducibility)
-12. [Documentation](#documentation)
-13. [Bundled skills](#bundled-skills)
-14. [Repo conventions](#repo-conventions)
-15. [Citation](#citation)
-16. [License](#license)
+UpliftBench is a Python library with Typer CLIs that takes the public Criteo Uplift Prediction Dataset v2 from raw CSV to a typed parquet file, fits five conditional average treatment effect (CATE) estimators on LightGBM, and ranks them with population-level uplift metrics. It then stress-tests the average effect with DoWhy's four refuters and turns predictions into a four-way targeting segmentation.
 
-## What this project is
+The code, tests, and CI are in place. Full-data benchmark numbers are not committed yet, so the leaderboard has to be reproduced locally (see [Results](#results)).
 
-UpliftBench takes the public **Criteo Uplift Prediction Dataset v2** (~13.9M rows from an RCT-style randomized ad-targeting experiment) and runs five canonical uplift estimators end-to-end on a single 16 GB laptop:
+## Highlights
 
-- **S-learner** (one model, treatment as feature)
-- **T-learner** (two models, one per arm)
-- **X-learner** (Kunzel et al., 2019; implemented from scratch with LightGBM)
-- **DR-learner** (EconML, doubly robust, 3-fold cross-fit)
-- **Double Machine Learning** (EconML LinearDML)
+- Five estimators behind one `BaseUpliftEstimator` protocol (`fit`, `predict_cate`, `predict_baseline`) and a name registry, so the train CLI, leaderboard builder, and scorer handle every model the same way. The S, T, and X learners are written directly on LightGBM; the DR-learner and LinearDML wrap EconML with LightGBM nuisance models and 3-fold cross-fitting.
+- Qini coefficient, AUUC, and top-k uplift implemented in numpy ([`src/upliftbench/eval/`](src/upliftbench/eval/)) and tested on synthetic data with a known per-row uplift: a ranker sorted on the true signal must score above 0.05, and the mean of eight random rankers must land within 0.03 of zero.
+- DoWhy model, identify, estimate, refute pipeline with all four standard refuters (placebo treatment, random common cause, data subset, unobserved common cause) on a 1M-row sample that preserves the treatment ratio. A refuter that throws is recorded in the output JSON instead of killing the run.
+- A data path designed for a 16 GB laptop, CPU only: streaming CSV.gz to zstd parquet with an explicit float32/uint8 schema, column-pruned reads, and LightGBM with `max_bin=63`.
+- Every saved model gets a sibling JSON with git SHA, library versions, fit time, process RSS after fitting, metrics, and a 16-character SHA-256 prefix of the held-out row indices. One seed (`SEED = 42`) drives the train/test split, the DoWhy subsample, and the scoring sample.
+- GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs ruff, a ruff format check, mypy, pytest with coverage, and an em-dash check on pushes to `main` and `claude/**` branches and on pull requests to `main`. `make ci` runs the same steps locally, with one shell caveat noted under [Getting started](#getting-started).
 
-Each estimator implements the same `BaseUpliftEstimator` protocol so the evaluation harness, the Streamlit app, and the Kaggle notebook all consume them identically. The best estimator (by Qini) is then wrapped in DoWhy's four-step pipeline (model, identify, estimate, refute) and stress-tested with all four standard refuters on a stratified 1M-row sample.
+## Results
 
-Three artifacts come out: an interactive Streamlit demo where a treatment-budget slider re-allocates targeting across persuadable, sure-thing, lost-cause, and do-not-disturb segments live, a self-contained Kaggle notebook that fits the 9-hour CPU wall on a 2M-row subsample, and a short technical write-up.
+No benchmark results are published in this repository yet. The leaderboard (`artifacts/leaderboard.parquet`), the scored sample, and the DoWhy refutation JSON are produced locally by `make eval`, `make score`, and `make dowhy`, and none of them are committed. The notebooks in [`notebooks/`](notebooks/) are saved without outputs. `.gitattributes` already routes the three artifacts through Git LFS for when they are published.
 
-## What I learned
+## How it works
 
-### Causal inference is structurally different from prediction
-
-A response model predicts `P(Y=1 | X)`. An uplift model predicts `P(Y=1 | X, T=1) - P(Y=1 | X, T=0)`. The catch: you never observe both for the same row. There is no ground-truth column to validate against per-row, only population-level metrics (Qini, AUUC) that integrate over a ranking. This reframes how you think about validation: instead of "did my predictions match the labels?", the question becomes "does my ranking produce a steeper-than-random cumulative-lift curve when we look at the held-out treated and control arms?".
-
-### Qini math is short but the normalization choice matters
-
-`Q(k) = Y_t(k) - Y_c(k) * (N_t(k) / N_c(k))` is two cumulative sums and a rescaling. The whole curve fits in about 15 lines of numpy. What is **not** short is picking the right denominator for the coefficient. My first implementation divided by `area_optimal - area_random`, where I approximated the optimal curve by sorting on `y*t - y*(1-t)`. That gave a Qini coefficient of -0.25 for a perfect ranker on synthetic data with known positive uplift. The "optimal" curve was actually a near-degenerate shape because of how the placeholder score behaved on early prefixes. Switching to the simpler `2 * (area_model - area_random) / |Q_total|` normalization (random near zero, perfect near one) made the math correct and the tests green. Lesson: TDD against synthetic data with known signal will save you from publishing a benchmark with a sign-flip bug.
-
-### The X-learner's propensity-weighting trick is the interesting part
-
-The X-learner is not "two models" or "four models". The structural insight is: build pseudo-outcomes `D_1 = Y - mu_0(X)` on treated rows and `D_0 = mu_1(X) - Y` on control rows (using the **opposite-arm** response model for each), regress them separately, and then combine the two CATE estimates with the propensity as the weight. The propensity weight is what makes it robust to imbalanced arms: when there are few treated rows, `D_1` is noisy, so `1-g` is small, so `tau_1` gets less weight in the final combination. Under an RCT, `g` is approximately constant; under observational data you would fit a propensity model. That single design choice is the difference between T-learner and X-learner.
-
-### Doubly robust is a strong promise
-
-The DR-learner is doubly robust: consistency of the CATE estimate requires only ONE of (propensity model, outcome regression) to be correctly specified, not both. EconML's implementation does this with 3-fold cross-fitting so the nuisance estimates are out-of-fold when they feed the final stage, avoiding the "training residuals are biased toward zero" trap. Cross-fitting is a small implementation cost (you fit nuisances K times) but the bias guarantee is large. This is also why Double Machine Learning works: residualize both sides, then regress residual on residual.
-
-### DoWhy refutation is the part that separates a benchmark from a press release
-
-The four refuters answer different questions:
-- `placebo_treatment`: if you scramble the treatment column, does the estimate go to zero? (sanity)
-- `random_common_cause`: if you add a meaningless covariate, does the estimate stay put? (robustness to spurious adjustment)
-- `data_subset`: is the estimate stable to row subsampling? (no concentration in a few rows)
-- `add_unobserved_common_cause`: how strong would a hidden confounder need to be to drive the estimate to zero? (sensitivity)
-
-An ATE point estimate without these refutations is a number, not a finding. The 1M-row sample size for refutation is a pragmatic compromise; the math would be more precise on the full data, but the laptop wall-time is the binding constraint, not the statistical precision.
-
-### Memory engineering is half the work on a single laptop
-
-13.9M rows fits in 16 GB only if you treat dtype as a first-class design decision. Float32 features, uint8 treatment / visit / conversion, parquet with zstd, pyarrow batch iteration at 500k rows, and `lgb.Dataset(free_raw_data=True, max_bin=63)` keep peak RSS under 6 GB during training. Skip any one of those and you can blow past 12 GB and start swapping. The first time I tried with default pandas dtypes, the to_pandas() call alone took 4 GB just for the feature matrix.
-
-### The segmentation step is where the model meets the budget decision
-
-A CATE estimate alone is not actionable. To decide who to treat, you need both the predicted uplift AND the predicted baseline outcome: someone with high baseline propensity is going to convert anyway, so spending budget on them is waste even if their CATE looks high. The four-way segmentation (persuadables, sure-things, lost-causes, do-not-disturb) is the canonical way to translate `(pred_cate, pred_baseline)` into a targeting policy. The Streamlit slider makes this tangible: at small budgets you're targeting almost pure persuadables, but as the budget grows the marginal added user is increasingly a sure-thing or a do-not-disturb. That diminishing-returns curve is the story.
-
-### The "no inference at runtime" Streamlit pattern
-
-Streamlit Community Cloud caps each app at ~1 GB RAM. LightGBM + DoWhy + CausalML + EconML alone come to several hundred MB of installed code, and loading even one trained model adds more. The right pattern is to precompute a 200k-row scored sample at training time, persist it as a parquet via Git LFS, and have the Streamlit app do only filtering and segmentation math at runtime. The app's import list is intentionally `pandas, pyarrow, numpy, matplotlib, streamlit` plus the shared `segmentation` module. No heavy ML imports anywhere. Cold start drops from "model loading times out" to under three seconds.
-
-### Library version pinning is not optional in causal inference
-
-DoWhy 0.12 still uses `networkx.algorithms.d_separated`, which networkx removed in 3.3. CausalML's X-learner internally uses pygam, which calls `.A` on a scipy sparse matrix, which scipy removed in a recent release. Both broke before I had any code on the page. The fix is networkx pinned `<3.3` in pyproject and a from-scratch X-learner implementation that skips the pygam path. Both decisions are documented in the code so a future reader knows which pins are accidental and which are load-bearing.
-
-### TDD is unreasonably effective on math-bearing code
-
-Seven of the ten test files are TDD against synthetic data with a known signal: per-row uplift `u_i = sigmoid(x_i)`, then verify a perfect ranker beats random by a measurable margin and a random ranker stays within ±0.03 of zero. Those tests caught the Qini sign-flip described above, caught a propensity-weighting direction bug in the X-learner, and caught a dtype regression in the parquet writer. Each test ran red first, then green after the minimal implementation. The cycle felt slow on the first task; by the fifth it was the fastest way to ship the math.
-
-## Quickstart
-
-```bash
-# 1. Install
-uv sync --extra dev                     # core + dev (tests, lint)
-uv sync --extra dev --extra streamlit   # add the slim Streamlit-only deps
-
-# 2. Get and prepare data (one shot, ~15 minutes)
-make data       # download criteo-uplift-v2.1.csv.gz (~700 MB, with HF mirror fallback)
-make prepare    # CSV.gz to parquet, dtype-optimized, batched
-
-# 3. Train and evaluate
-make train-all  # S, T, X, DR, DML (~2-3 hours on 8 CPU cores)
-make dowhy      # 4-step pipeline + 4 refuters on a 1M stratified sample
-make eval       # build artifacts/leaderboard.parquet
-make score      # build artifacts/scored_sample.parquet (Git LFS)
-
-# 4. Demo and tests
-make app        # Streamlit local
-make test       # pytest -q
-make ci         # lint + fmt-check + type + test-cov + em-dash-check (mirrors GHA)
+```mermaid
+flowchart LR
+    A["Criteo Uplift v2 CSV.gz<br/>data/raw/"] -->|"prepare_data.py"| B["criteo.parquet<br/>float32 features, uint8 flags"]
+    B -->|"train.py, once per estimator"| C["artifacts/models/<br/>joblib + metadata JSON"]
+    C -->|"evaluate_all.py"| D["leaderboard.parquet<br/>best_estimator.txt"]
+    C -->|"score_sample.py"| E["scored_sample.parquet<br/>200k held-out rows"]
+    D --> E
+    B -->|"run_dowhy.py"| F["dowhy_refutation.json<br/>1M-row sample"]
+    D --> G["streamlit_app/app.py"]
+    E --> G
+    F --> G
 ```
 
-If you only have 60 seconds and just want to read the math, open
-[`docs/EVALUATION.md`](docs/EVALUATION.md) and
-[`src/upliftbench/eval/qini.py`](src/upliftbench/eval/qini.py).
+The library in `src/upliftbench/` holds the logic, and the scripts, app, and analysis notebooks import it. `notebooks/kaggle_end_to_end.ipynb` is the exception: a self-contained copy that trains all five estimators on a 2M-row subsample, meant to stay under Kaggle's 9-hour CPU limit. The outcome is `visit`, the treatment is `treatment`, and the features are the twelve anonymized columns `f0` to `f11`.
 
-## Repo layout
+### Estimators
+
+| `--estimator` key | Method | Implementation |
+|---|---|---|
+| `s-learner` | One model with treatment as a feature; CATE = mu(x, 1) - mu(x, 0) | LightGBM booster, written here |
+| `t-learner` | One model per arm; CATE = mu1(x) - mu0(x) | LightGBM, written here |
+| `x-learner` | Imputes per-row effects using the opposite arm's model, fits one effect regressor per arm, then blends them with the empirical treatment rate as the propensity | LightGBM, written here (Kunzel et al., 2019) |
+| `dr-learner` | Builds pseudo-outcomes from a propensity model and an outcome model (consistent if either one is correctly specified), 3-fold cross-fitting | EconML `DRLearner` |
+| `dml` | Residualizes outcome and treatment on the features, then fits a linear final stage | EconML `LinearDML`, `cv=3` |
+
+All five share one LightGBM parameter dict in [`config.py`](src/upliftbench/config.py) (200 trees, 63 leaves, learning rate 0.05) so the comparison is not confounded by per-model tuning. For the EconML estimators, `predict_baseline` comes from a separate LightGBM classifier fit on control rows, which the segmentation step needs. Theory and implementation notes are in [`docs/ESTIMATORS.md`](docs/ESTIMATORS.md).
+
+### Evaluation
+
+Rows are sorted by predicted CATE. For the top `k` rows, with `N_t`, `N_c` the treated and control counts and `Y_t`, `Y_c` their positive outcomes:
+
+```
+Q(k)      = Y_t(k) - Y_c(k) * N_t(k) / N_c(k)
+qini_coef = 2 * (area_under_Q - Q(N) / 2) / |Q(N)|
+```
+
+A random ranking scores near 0 and a better-than-random ranking scores positive. AUUC uses the rate difference `(Y_t/N_t - Y_c/N_c) * k` with the same normalization, and top-k uplift is the treated-minus-control outcome rate inside the top 10, 20, and 30 percent. `evaluate_estimator` in [`eval/harness.py`](src/upliftbench/eval/harness.py) returns all of these plus the curve points. Derivations are in [`docs/EVALUATION.md`](docs/EVALUATION.md).
+
+### Segmentation and budget allocation
+
+[`segmentation.py`](src/upliftbench/segmentation.py) labels each row from its predicted CATE and predicted baseline (control-arm) response, using the thresholds in `config.py`:
+
+| Segment | `pred_cate` | `pred_baseline` |
+|---|---|---|
+| `persuadable` | > 0 | < 0.5 |
+| `sure_thing` | <= 0 | >= 0.5 |
+| `lost_cause` | <= 0 | < 0.5 |
+| `do_not_disturb` | > 0 | >= 0.5 |
+
+`budget_allocation` takes the top `budget_pct` of rows by predicted CATE and reports the segment mix of the people you would treat. The Streamlit app puts that behind a slider, with a per-estimator selector, the leaderboard, and the refutation table.
+
+### Refutation
+
+[`refute/dowhy_pipeline.py`](src/upliftbench/refute/dowhy_pipeline.py) builds a DoWhy `CausalModel` with the twelve features as common causes, identifies a backdoor estimand, estimates the average treatment effect on `visit` with `backdoor.linear_regression`, and runs the four refuters. This checks the population-level effect; it uses DoWhy's own estimator rather than the trained learners, which are compared separately on the leaderboard. The 1M-row default (`--sample`) keeps the refuters' repeated re-estimation within laptop wall time. See [`docs/REFUTATION.md`](docs/REFUTATION.md).
+
+## Design decisions and lessons
+
+Uplift has no ground-truth column, so every metric here scores a ranking against held-out treated and control outcomes. I divide the Qini area by `|Q(N)|` instead of by the optimal-minus-random area, because the "optimal" curve is poorly defined for binary outcomes with heterogeneous effects. The synthetic-data tests in `tests/eval/` pin that behavior so a refactor cannot flip its sign unnoticed.
+
+The train/test split (`train_test_split_rct`) is a plain seeded permutation. It does not stratify on treatment, which keeps the randomized assignment untouched; the treatment ratio is about 0.85 ([`docs/DATA.md`](docs/DATA.md)). Randomization also lets the X-learner use the constant empirical treatment rate as its propensity instead of fitting one.
+
+Three dependency problems shaped the code. DoWhy 0.12 still calls `networkx.algorithms.d_separated`, so `pyproject.toml` pins `networkx<3.3`. CausalML's X-learner path ran into a pygam and scipy conflict, so I wrote the X-learner directly on LightGBM. CausalML is still a declared dependency, but no estimator uses it, and `persistence.py` only records its version. Finally, `np.trapz` is gone in numpy 2.4 and `np.trapezoid` does not exist before 2.0, so the area integrals use a small trapezoid helper that works across `numpy>=1.26`.
+
+The app never loads a model. `score_sample.py` precomputes CATE for every estimator on 200k held-out rows, and [`streamlit_app/app.py`](streamlit_app/app.py) imports only pandas, matplotlib, streamlit, `upliftbench.config`, and `upliftbench.segmentation`. The `streamlit` extra in `pyproject.toml` lists only the app's own dependencies (no LightGBM, EconML, DoWhy, or CausalML), aimed at Streamlit Community Cloud's 1 GB memory limit. Extras install on top of the base dependencies, though, so installing the package with that extra still pulls the full modeling stack. A slim install path is not wired up yet.
+
+I also audited the repo for reproducibility gaps ([`docs/PHASE6_REPRO_AUDIT.md`](docs/PHASE6_REPRO_AUDIT.md)) and fixed the documentation drift and numpy breakage it found in follow-up commits.
+
+## Tech stack
+
+| Area | Tools |
+|---|---|
+| Modeling | LightGBM, EconML, DoWhy |
+| Data and persistence | pyarrow, pandas, numpy, joblib |
+| CLI and app | Typer, Streamlit, matplotlib |
+| Tooling | uv (`uv.lock`), Make, pytest, ruff, mypy, pre-commit, GitHub Actions |
+
+## Getting started
+
+You need Python 3.11 or newer (CI runs 3.11), [uv](https://github.com/astral-sh/uv), and `make`.
+
+```bash
+git clone https://github.com/TirtheshJani/UpliftBench.git
+cd UpliftBench
+uv sync --extra dev --extra streamlit   # library, test and lint tools, Streamlit
+make test                               # pytest; uses synthetic data, no download needed
+make ci                                 # ruff, format check, mypy, pytest --cov, em-dash check
+```
+
+`make install` runs `uv sync --extra dev` and registers the pre-commit hooks. One caveat on `make ci`: its em-dash grep uses bash-only `$'...'` quoting and silently passes where `/bin/sh` is dash (Debian, Ubuntu).
+
+### Get the data
+
+`make data` runs `scripts/download_data.py`, which tries an S3 URL and then a Hugging Face mirror, both set in `src/upliftbench/config.py`. As of October 2026 neither resolves: the S3 bucket no longer exists, and the file in the [Hugging Face dataset](https://huggingface.co/datasets/criteo/criteo-uplift) is named `criteo-research-uplift-v2.1.csv.gz`, not the `criteo-uplift-v2.1.csv.gz` that `config.py` requests. Until that is fixed, download it by hand to the path the pipeline expects:
+
+```bash
+mkdir -p data/raw
+curl -L -o data/raw/criteo-uplift-v2.1.csv.gz \
+  https://huggingface.co/datasets/criteo/criteo-uplift/resolve/main/criteo-research-uplift-v2.1.csv.gz
+```
+
+### Run the pipeline
+
+```bash
+make prepare     # CSV.gz -> data/processed/criteo.parquet
+make train-all   # fit all five estimators -> artifacts/models/
+make eval        # leaderboard on the held-out 20% -> artifacts/leaderboard.parquet
+make score       # 200k held-out rows scored by every model -> artifacts/scored_sample.parquet
+make dowhy       # DoWhy pipeline and four refuters on 1M rows -> artifacts/dowhy_refutation.json
+make app         # Streamlit budget explorer
+```
+
+On a fresh clone, `make app` starts but shows a warning until the artifacts above exist.
+
+For a faster check of one estimator, `uv run python scripts/train.py --estimator x-learner --sample 500000` fits on a random subsample and prints Qini and AUUC on that subsample's own held-out split. It still saves the model to `artifacts/models/`, and `make eval` scores every model there against a split re-derived from the full parquet, so remove subsample models before building the leaderboard.
+
+## Repository layout
 
 ```
 UpliftBench/
-├── README.md, LICENSE, CLAUDE.md, Makefile
-├── pyproject.toml, uv.lock                # uv-managed env (Python 3.11+)
-├── .pre-commit-config.yaml                # ruff format + check, em-dash forbidder
-├── .github/workflows/ci.yml               # GitHub Actions, ubuntu-latest only
-├── .streamlit/config.toml                 # theme + headless settings
-├── .claude/skills/                        # five bundled skills (auto-loaded by Claude Code)
-├── .gitattributes                         # Git LFS rules for three artifacts
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── DATA.md
-│   ├── ESTIMATORS.md
-│   ├── EVALUATION.md
-│   ├── REFUTATION.md
-│   └── CONTRIBUTING.md
 ├── src/upliftbench/
-│   ├── config.py                          # paths, FEATURES, LIGHTGBM_PARAMS, thresholds
-│   ├── features.py                        # Criteo schema (pyarrow), dtype map
-│   ├── data/
-│   │   ├── prepare.py                     # streaming CSV.gz to parquet (pyarrow)
-│   │   └── loader.py                      # chunked iterator + train_test_split_rct
-│   ├── estimators/
-│   │   ├── base.py                        # BaseUpliftEstimator Protocol
-│   │   ├── s_learner.py, t_learner.py     # LightGBM
-│   │   ├── x_learner.py                   # LightGBM from scratch (no causalml dep)
-│   │   ├── dr_learner.py, dml.py          # EconML wrappers
-│   │   └── __init__.py                    # ESTIMATOR_REGISTRY + get_estimator
-│   ├── eval/
-│   │   ├── qini.py, auuc.py, topk.py
-│   │   └── harness.py                     # evaluate_estimator() entry point
-│   ├── refute/dowhy_pipeline.py           # 4 steps + all 4 standard refuters
-│   ├── segmentation.py                    # SHARED API (no heavy deps)
-│   ├── persistence.py                     # save/load + sibling JSON metadata
-│   └── plotting.py
-├── scripts/                               # Typer CLIs
-│   ├── download_data.py                   # primary URL + HF mirror fallback
-│   ├── prepare_data.py
-│   ├── train.py, evaluate_all.py
-│   ├── run_dowhy.py, score_sample.py
-├── notebooks/
-│   ├── 01_eda.ipynb
-│   ├── 02_s_t_learners.ipynb
-│   ├── 03_x_dr_dml.ipynb
-│   ├── 04_dowhy_refutation.ipynb
-│   ├── 05_comparison.ipynb
-│   └── kaggle_end_to_end.ipynb            # self-contained, fits 9h Kaggle CPU
-├── streamlit_app/app.py                   # NO heavy ML imports (slim Streamlit Cloud)
-├── tests/                                 # pytest tree mirrors src/
-├── artifacts/                             # produced locally by make score/eval/dowhy; gitignored unless committed via LFS
-└── blog/post.md
+│   ├── config.py            paths, features, seed, LightGBM params, segment thresholds
+│   ├── features.py          pyarrow schema (float32 features, uint8 flags)
+│   ├── data/                prepare.py (CSV.gz to parquet), loader.py (batch iterator, split)
+│   ├── estimators/          base protocol, registry, five estimators
+│   ├── eval/                qini.py, auuc.py, topk.py, harness.py
+│   ├── refute/              dowhy_pipeline.py
+│   ├── segmentation.py      segments and budget allocation, shared with the app
+│   ├── persistence.py       joblib save/load with metadata JSON
+│   └── plotting.py          matplotlib helpers
+├── scripts/                 Typer CLIs: download, prepare, train, evaluate_all, score_sample, run_dowhy
+├── streamlit_app/app.py     budget explorer over precomputed artifacts
+├── notebooks/               EDA, per-estimator Qini, refutation, comparison, Kaggle end-to-end
+├── tests/                   10 pytest modules mirroring src/
+├── docs/                    architecture, data, estimators, evaluation, refutation, contributing, audit
+├── blog/post.md             draft write-up
+├── Makefile                 pipeline and CI targets
+└── pyproject.toml, uv.lock
 ```
 
-## Architecture at a glance
+For more detail, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (module map and shared contracts), [`docs/DATA.md`](docs/DATA.md) (schema and loading), [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) (dev setup, test policy, pre-commit).
 
-The library is the **single source of truth**. Three entry points (training scripts, Kaggle notebook, Streamlit app) all import the same modules so the scoring math is identical across them.
+## Status and roadmap
 
-```
-                       ┌──────────────────────────────────────────┐
-   data/raw/  ─CSV─►   │  scripts/prepare_data.py  (one shot)     │
-                       │     pyarrow streaming                    │
-                       └──────────────────┬───────────────────────┘
-                                          │
-                                          ▼
-                       ┌──────────────────────────────────────────┐
-   data/processed/  ◄──┤   data/processed/criteo.parquet          │
-                       └──────────────────┬───────────────────────┘
-                                          │
-        ┌─────────────────────────────────┼──────────────────────────────────┐
-        │                                 │                                  │
-        ▼                                 ▼                                  ▼
- scripts/train.py                  scripts/run_dowhy.py            scripts/score_sample.py
-  (per estimator)                   (best estimator)                (all estimators, 200k)
-        │                                 │                                  │
-        ▼                                 ▼                                  ▼
- artifacts/models/*.joblib       artifacts/dowhy_refutation.json   artifacts/scored_sample.parquet
-        │                                                                    │
-        ▼                                                                    │
- scripts/evaluate_all.py                                                     │
-        │                                                                    │
-        ▼                                                                    ▼
- artifacts/leaderboard.parquet  ─────────────────────────────►  streamlit_app/app.py
-                                                                (NO heavy ML imports)
-```
+Data preparation, all five estimators, the metrics module, segmentation, the DoWhy pipeline, persistence, the CLIs, the Streamlit app, the notebooks, and CI are implemented. Tests cover the metrics, segmentation, data prep, and persistence on synthetic data, plus fit-and-predict smoke tests for every estimator and a structure test for the DoWhy output.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module responsibilities.
+Still to do:
 
-## The five estimators
+- Fix the dataset URLs in `config.py` and in `notebooks/kaggle_end_to_end.ipynb`, which downloads from the same S3 URL.
+- Run the full pipeline and publish the leaderboard and refutation results through Git LFS.
+- Deploy the Streamlit app to Streamlit Community Cloud with an install path that skips the base modeling dependencies.
 
-All five implement the same protocol:
+## Data and citation
 
-```python
-class BaseUpliftEstimator(Protocol):
-    name: str
-    def fit(self, X, T, Y) -> None: ...
-    def predict_cate(self, X) -> np.ndarray: ...
-    def predict_baseline(self, X) -> np.ndarray: ...
-```
-
-They register themselves into `ESTIMATOR_REGISTRY`, which the train CLI dispatches against. See [`docs/ESTIMATORS.md`](docs/ESTIMATORS.md) for theory and implementation notes per estimator.
-
-## Evaluation
-
-Qini and AUUC are implemented from scratch in `src/upliftbench/eval/{qini,auuc}.py` and TDD'd against synthetic uplift data where the true per-row treatment effect is known analytically. A perfect ranker (sort by ground-truth) gives positive Qini > 0.05 on the synthetic fixture; a random ranker stays within ±0.03 of zero.
-
-See [`docs/EVALUATION.md`](docs/EVALUATION.md) for the math.
-
-## The four-way segmentation
-
-The shared `segmentation.score_and_segment` function labels each row as one of:
-
-| Segment | predicted CATE | predicted baseline | meaning |
-|---|---|---|---|
-| persuadable | > 0 | low | treatment converts them |
-| sure_thing | ≤ 0 | high | converts anyway |
-| lost_cause | ≤ 0 | low | treatment will not help |
-| do_not_disturb | > 0 | high | classical uplift literature flags as negative ROI |
-
-The Streamlit slider re-allocates the treatment budget across these four buckets live.
-
-## DoWhy refutation
-
-The best estimator (by Qini) is wrapped in DoWhy's four-step pipeline:
-
-1. **Model** the causal graph (treatment, outcome, common causes).
-2. **Identify** a backdoor-adjusted estimand.
-3. **Estimate** the effect (`backdoor.linear_regression` by default).
-4. **Refute** with all four standard refuters: `placebo_treatment`, `random_common_cause`, `data_subset`, `add_unobserved_common_cause`.
-
-Refutation runs on a **1M-row stratified-by-treatment subsample** (the full 13.9M is intractable on a 16 GB laptop). The sample-size choice is documented in code (`run_dowhy(sample_n=1_000_000)`) and in [`docs/REFUTATION.md`](docs/REFUTATION.md).
-
-## Hardware and memory budget
-
-| Item | Value |
-|---|---|
-| Target hardware | RTX 4080 laptop, 16 GB system RAM, Windows or WSL2 |
-| GPU | Not used. CPU-only, by design. |
-| Python | 3.11+ |
-| Env manager | uv + pyproject.toml + src/ layout |
-| Lint/type | ruff + mypy |
-| Tests | pytest, TDD for math-bearing modules, smoke tests for estimators |
-| CI | GitHub Actions, ubuntu-latest only |
-
-Memory tactics:
-
-- float32 features, uint8 treatment/visit/conversion.
-- pyarrow batch iteration with `batch_size=500_000`.
-- `lgb.Dataset(..., free_raw_data=True, max_bin=63)`.
-- Documented fallback to a 5M-row stratified-by-treatment sample if peak RSS ever exceeds 12 GB.
-
-## Reproducibility
-
-- All splits derive from a single seed (`SEED=42` in `src/upliftbench/config.py`).
-- The held-out test-row hash is recorded in each model's metadata JSON; every estimator on the leaderboard was scored on the same rows.
-- Library versions are persisted in metadata at training time.
-- CI runs `ruff check`, `ruff format --check`, `mypy src`, `pytest -q`, and an em-dash grep check on every push.
-
-```bash
-uv run pre-commit run --all-files
-uv run mypy src
-uv run pytest --cov=upliftbench --cov-report=term-missing
-```
-
-## Documentation
-
-| Doc | What it covers |
-|---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module map, dependency graph, shared-API contracts |
-| [`docs/DATA.md`](docs/DATA.md) | Criteo Uplift v2 schema, download path, memory tactics |
-| [`docs/ESTIMATORS.md`](docs/ESTIMATORS.md) | Theory + implementation notes for each of the five learners |
-| [`docs/EVALUATION.md`](docs/EVALUATION.md) | Qini and AUUC math, normalization, anti-patterns |
-| [`docs/REFUTATION.md`](docs/REFUTATION.md) | DoWhy 4-step pipeline, each refuter's intent |
-| [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Dev setup, TDD policy, pre-commit, CI |
-| [`blog/post.md`](blog/post.md) | Short technical write-up |
-
-## Bundled skills
-
-`.claude/skills/` ships five Claude Code skills so any session in this repo auto-loads them:
-
-- `writing-plans` (plan format)
-- `executing-plans` (per-task workflow)
-- `test-driven-development` (red-green-refactor + anti-patterns)
-- `dispatching-parallel-agents` (when to fan out)
-- `karpathy-guidelines` (think before coding, simplicity, surgical edits)
-
-## Repo conventions
-
-- **No em dashes** anywhere in committed text. A pre-commit hook enforces this. Use commas, parentheses, or semicolons.
-- **No `git add -A`**. Stage specific paths so secrets and large files cannot slip in.
-- **Git LFS** rules in `.gitattributes` are scoped to `artifacts/{scored_sample.parquet, leaderboard.parquet, dowhy_refutation.json}`. These files do NOT ship with the repo; they are produced locally by `make score` / `make eval` / `make dowhy` and only committed via LFS if you choose to publish them. Trained models are gitignored; reproduce with `make train-all`.
-- **Branch policy**: develop on a feature branch (e.g. `claude/<topic>`) and open a PR to `main`. Do not push to `main` without explicit user request.
-
-## Citation
-
-If you use this benchmark, please cite the Criteo dataset:
+The [Criteo Uplift Prediction Dataset v2](https://huggingface.co/datasets/criteo/criteo-uplift) is released by Criteo AI Lab under its own license (see the dataset card). This repository does not redistribute it; raw and processed data are gitignored. If you use the dataset, cite:
 
 ```bibtex
 @inproceedings{Diemert2018,
-  author    = {Diemert Eustache, Betlei Artem and Renaudin, Christophe and Massih-Reza Amini},
+  author    = {Diemert, Eustache and Betlei, Artem and Renaudin, Christophe and Amini, Massih-Reza},
   title     = {A Large Scale Benchmark for Uplift Modeling},
   booktitle = {Proceedings of the AdKDD and TargetAd Workshop, KDD},
   year      = {2018}
 }
 ```
 
+The DR-learner and LinearDML come from EconML, the refutation pipeline from DoWhy, and every base model from LightGBM.
+
+## Author
+
+Tirthesh Jani: [GitHub](https://github.com/TirtheshJani) · [LinkedIn](https://www.linkedin.com/in/tirthesh-jani)
+
 ## License
 
-MIT (see [`LICENSE`](LICENSE)).
-
-The Criteo Uplift Prediction Dataset v2 is provided by Criteo AI Lab under their dataset license; this repo does not redistribute the data, only fetches it on demand.
+MIT, see [`LICENSE`](LICENSE).
